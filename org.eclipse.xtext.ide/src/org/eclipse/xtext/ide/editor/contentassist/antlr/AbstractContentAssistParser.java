@@ -14,6 +14,7 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Set;
 
 import org.antlr.runtime.ANTLRStringStream;
 import org.antlr.runtime.BaseRecognizer;
@@ -22,6 +23,7 @@ import org.antlr.runtime.RecognizerSharedState;
 import org.antlr.runtime.Token;
 import org.antlr.runtime.TokenSource;
 import org.eclipse.xtext.AbstractElement;
+import org.eclipse.xtext.AbstractRule;
 import org.eclipse.xtext.Alternatives;
 import org.eclipse.xtext.CompoundElement;
 import org.eclipse.xtext.GrammarUtil;
@@ -31,7 +33,9 @@ import org.eclipse.xtext.ide.editor.contentassist.antlr.ObservableXtextTokenStre
 import org.eclipse.xtext.ide.editor.contentassist.antlr.internal.AbstractInternalContentAssistParser;
 import org.eclipse.xtext.ide.editor.contentassist.antlr.internal.InfiniteRecursion;
 import org.eclipse.xtext.ide.editor.contentassist.antlr.internal.Lexer;
+import org.eclipse.xtext.ide.editor.partialEditing.IPartialEditingContentAssistParser;
 import org.eclipse.xtext.parser.antlr.IUnorderedGroupHelper;
+import org.eclipse.xtext.xtext.RuleNames;
 
 import com.google.common.collect.Lists;
 import com.google.inject.Inject;
@@ -41,7 +45,7 @@ import com.google.inject.name.Named;
 /**
  * @since 2.9
  */
-public abstract class AbstractContentAssistParser implements IContentAssistParser {
+public abstract class AbstractContentAssistParser implements IContentAssistParser, IPartialEditingContentAssistParser {
 
 	@Inject
 	@Named(LexerIdeBindings.CONTENT_ASSIST)
@@ -52,6 +56,20 @@ public abstract class AbstractContentAssistParser implements IContentAssistParse
 	
 	@Inject
 	private RequiredRuleNameComputer requiredRuleNameComputer;
+	
+	@Inject
+	private RuleNames ruleNames;
+	
+	private AbstractRule entryRule;
+
+	@Override
+	public void initializeFor(AbstractRule rule) {
+		this.entryRule = rule;
+	}
+	
+	public AbstractRule getEntryRule() {
+		return entryRule;
+	}
 	
 	protected TokenSource createTokenSource(String input) {
 		return createLexer(new ANTLRStringStream(input));
@@ -299,10 +317,43 @@ public abstract class AbstractContentAssistParser implements IContentAssistParse
 	}
 
 	protected abstract String getRuleName(AbstractElement element);
-		
+
 	protected abstract AbstractInternalContentAssistParser createParser();
-	
-	protected abstract Collection<FollowElement> getFollowElements(AbstractInternalContentAssistParser parser);
+
+	protected Collection<FollowElement> getFollowElements(AbstractInternalContentAssistParser parser) {
+		return getFollowElements(parser, entryRule);
+	}
+
+	protected Collection<FollowElement> getFollowElements(AbstractInternalContentAssistParser parser,
+			AbstractRule rule) {
+		String ruleName = ruleNames.getAntlrRuleName(rule);
+		return getFollowElements(parser, ruleName);
+	}
+
+	protected Collection<FollowElement> getFollowElements(AbstractInternalContentAssistParser parser, String ruleName) {
+		try {
+			Method method = parser.getClass().getMethod(ruleName);
+			method.setAccessible(true);
+			try {
+				method.invoke(parser);
+			} catch (InvocationTargetException targetException) {
+				if ((targetException.getCause() instanceof InfiniteRecursion)) {
+					throw (InfiniteRecursion) targetException.getCause();
+				}
+				throw new RuntimeException(targetException);
+			}
+			Set<FollowElement> result = parser.getFollowElements();
+			return result;
+		} catch (IllegalAccessException e) {
+			throw new RuntimeException(e);
+		} catch (IllegalArgumentException e) {
+			throw new RuntimeException(e);
+		} catch (NoSuchMethodException e) {
+			throw new RuntimeException(e);
+		} catch (SecurityException e) {
+			throw new RuntimeException(e);
+		}
+	}
 	
 	protected abstract String[] getInitialHiddenTokens();
 	
